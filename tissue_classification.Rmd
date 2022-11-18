@@ -1,0 +1,403 @@
+---
+title: "Analysis of Breast Tissue using Machine Learning"
+output:
+  html_document:
+    df_print: paged
+---
+
+The purpose of this project is to demonstrate a few common machine learning techniques and their practicality for classification problems.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+
+
+
+```{r load library, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# Imports for Data Analysis/Visualization
+###############################################################################
+library("tidyverse") 
+library("partykit") # For visualization of trees
+###############################################################################
+# Support for Modelling and Machine Learning 
+###############################################################################
+library("caret") #For fitting/plotting models
+library("rpart") # For decision trees
+library("randomForest") # For random forests
+library("class") # For K-nearest neighbor
+
+```
+
+
+
+```{r load data, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+###############################################################################
+# Read in Data
+###############################################################################
+
+cancer_data <-  data.table::fread("FNA_cancer.csv")
+glimpse(cancer_data)
+
+```
+
+# Process Data
+
+```{r process data, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+
+
+###############################################################################
+# Drop last column, clean certain column names, and drop all na's 
+###############################################################################
+cancer_data_clean <- cancer_data %>%
+  select(-33) %>%
+  rename("concave_points_mean" = "concave points_mean",
+         "concave_points_se" = "concave points_se",
+         "concave_points_worst" = "concave points_worst") %>%
+  drop_na()
+
+###############################################################################
+# Glimpse of processed data 
+###############################################################################
+glimpse(cancer_data_clean)
+
+```
+
+# Exploratory Data Analysis
+
+## Frequency of diagnosis 
+
+```{r eda - frequency of diagnosis, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# Frequency of diagnosis
+###############################################################################
+cancer_data_clean %>%
+  ggplot(aes(x = diagnosis, fill = diagnosis)) +
+  geom_bar() +
+  theme_bw() +
+  ggtitle(label = "Frequency of Diagnosis Between Benign and Malignant Tissue")
+
+```
+
+## Univariate relationship between diagnosis and potential explanatory variables 
+
+```{r eda - bivariate relationships, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+for (i in names(cancer_data_clean)[3:32]) {
+  print(cancer_data_clean %>%
+    ggplot(aes_string(x = "diagnosis", y = i, fill = "diagnosis")) +
+    geom_boxplot() +
+    theme_bw() +
+    ggtitle(label = paste0("Diagnosis vs. ", i))) 
+}
+
+```
+
+**Conclusion: In general, higher values for any of the potential explanatory variables are found in malignant tissue masses compared to those classified as benign.** 
+
+## Relationship between mean and se of each explanatory variable
+
+```{r eda - relationship betwen mean and se of each variable, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+cancer_data_clean %>%
+  ggplot(aes(x = radius_mean, y = radius_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Radius Mean vs. Radius SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = texture_mean, y = texture_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Texture Mean vs. Texture SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = perimeter_mean, y = perimeter_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Perimeter Mean vs. Perimeter SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = area_mean, y = area_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Area Mean vs. Area SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = smoothness_mean, y = smoothness_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Smoothness Mean vs. Smoothness SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = compactness_mean, y = compactness_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Compactness Mean vs. Smoothness SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = concavity_mean, y = concavity_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Concavity Mean vs. Concavity SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = concave_points_mean, y = concave_points_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Concave Points Mean vs. Concave Points SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = symmetry_mean, y = symmetry_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Symmetry Mean vs. Symmetry SE and by Diagnosis Type") +
+  theme_bw()
+
+cancer_data_clean %>%
+  ggplot(aes(x = fractal_dimension_mean, y = fractal_dimension_se, color = diagnosis)) +
+  geom_point() +
+  ggtitle(label = "Fractal Dimension Mean vs. Fractal Dimension SE and by Diagnosis Type") +
+  theme_bw()
+
+```
+
+**Conclusion: For most potential predictors, there seems to be a positive relationship between mean and se. Also, records with a high mean and se value are more likely malignant compared to records with a lower mean and se.** 
+
+# Classification Algorithms
+
+## Split the data into train and testing
+
+```{r split data into train and test datasets, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+set.seed(1899)
+
+###############################################################################
+# Set an index for train and test dataset
+###############################################################################
+train_index <- createDataPartition(1:nrow(cancer_data_clean), p = 0.8, list = FALSE, times = 1) 
+
+###############################################################################
+# Use index formed above to partition the data accordingly
+###############################################################################
+train_data <- cancer_data_clean[train_index,]
+test_data <- cancer_data_clean[-train_index,]
+
+###############################################################################
+# Train dataset
+###############################################################################
+glimpse(train_data)
+
+###############################################################################
+# Test dataset
+###############################################################################
+glimpse(test_data)
+
+```
+
+## Classification algorithm using decision trees 
+
+```{r decision trees, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# Build tree using all potential explanatory variables - start with most complex tree possible
+###############################################################################
+cancer_tree <- rpart(diagnosis ~., data = train_data, cp = 0)
+cancer_tree
+plot(as.party(cancer_tree))
+
+###############################################################################
+# Predict on test data using tree created in the training dataset
+###############################################################################
+test_data$preds <- predict(cancer_tree, newdata = test_data, "class")
+
+###############################################################################
+# Confusion matrix
+###############################################################################
+confusionMatrix(table(test_data$diagnosis, test_data$preds)) 
+
+###############################################################################
+# What other levels of complexity would improve accuracy of the decision tree?\
+###############################################################################
+plotcp(cancer_tree) 
+
+###############################################################################
+# Based on plot above, a complexity parameter of 0.017 may give us low error and high interpretability 
+###############################################################################
+
+
+###############################################################################
+# Prune original tree using a cp of 0.017
+###############################################################################
+cancer_tree2 <- prune(cancer_tree, cp = 0.017)
+cancer_tree2
+plot(as.party(cancer_tree2))
+
+###############################################################################
+# Predict on test data using tree created in the training dataset
+###############################################################################
+test_data$preds2 <- predict(cancer_tree2, newdata = test_data, "class")
+
+###############################################################################
+# Confusion matrix
+###############################################################################
+confusionMatrix(table(test_data$diagnosis, test_data$preds2)) 
+
+```
+
+Conclusion: Although a tree with a complexity parameter of 0.017 is slightly less accurate than the original tree, its lower overall complexity makes it easier to interpret and apply to other similar data. 
+
+## Classification algorithm using bagging algorithm
+
+```{r bagging, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# First, turn our outcome variable into a factor variable
+###############################################################################
+train_data$diagnosis <- factor(train_data$diagnosis, levels = c("B", "M"))
+test_data$diagnosis <- factor(test_data$diagnosis, levels = c("B", "M"))
+
+###############################################################################
+# Build random forest using bagging algorithm 
+###############################################################################
+formula <- as.formula(diagnosis ~.)
+cancer_bagging <- randomForest(formula, data = train_data, mtry = 30, ntree = 500)
+cancer_bagging
+
+###############################################################################
+# Predict on test data using bagging algorithm created in the training dataset
+###############################################################################
+test_data$bag_pred <- predict(cancer_bagging, test_data, type = "class")
+
+###############################################################################
+# Confusion matrix 
+###############################################################################
+confusionMatrix(table(test_data$diagnosis, test_data$bag_pred))
+
+```
+
+## Classification algorithm using random forest 
+
+```{r random forests, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# Build random forest using random forest - start with 10 predictors
+###############################################################################
+cancer_forest <- randomForest(formula, data = train_data, mtry = 10, ntree = 500)
+cancer_forest
+
+###############################################################################
+# How often is a variable being used to make a split? 
+###############################################################################
+varImpPlot(cancer_forest)
+
+###############################################################################
+# Most important variables seem to be perimeter_worst, concave points worst, area_worst, and radius_worst. 
+# This is very similar to the decision tree algorithm
+###############################################################################
+
+###############################################################################
+# Predict on test data using random forest algorithm created in the training dataset
+###############################################################################
+test_data$forest_pred <- predict(cancer_forest, test_data, type = "class")
+
+###############################################################################
+# Confusion matrix 
+###############################################################################
+confusionMatrix(table(test_data$diagnosis, test_data$forest_pred))
+
+
+###############################################################################
+# Now try only 4 predictors
+###############################################################################
+cancer_forest2 <- randomForest(formula, data = train_data, mtry = 4, ntree = 500)
+cancer_forest2
+
+###############################################################################
+# How often is a variable being used to make a split? 
+###############################################################################
+varImpPlot(cancer_forest2)
+# Same variables are important 
+
+
+###############################################################################
+# Predict on test data using random forest algorithm created in the training dataset
+###############################################################################
+test_data$forest_pred2 <- predict(cancer_forest2, test_data, type = "class")
+
+###############################################################################
+# Confusion matrix 
+###############################################################################
+confusionMatrix(table(test_data$diagnosis, test_data$forest_pred2))
+
+```
+
+**Conclusion: A random forest using 10 predictors at every split, on average, yields the best accuracy.**
+
+## Classification algorithm using KNN
+
+```{r knn - process data first, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# First, process data to get it ready for knn algorithm
+# Turn our outcome variable to dummy variable
+###############################################################################
+train_data$diagnosis <- ifelse(train_data$diagnosis == "M", 1, 0)
+test_data$diagnosis <- ifelse(test_data$diagnosis == "M", 1, 0)
+
+###############################################################################
+# Rescale predictor variables 
+###############################################################################
+rescale_x <- function(x){(x-min(x))/(max(x)-min(x))}
+
+###############################################################################
+# Train data
+###############################################################################
+for (i in names(train_data)[-1:-2]) {
+  train_data[,i] <- rescale_x(train_data[,..i])
+}
+
+
+###############################################################################
+# Test data
+###############################################################################
+for (i in names(test_data)[3:32]) {
+  test_data[,i] <- rescale_x(test_data[,..i])
+}
+
+glimpse(train_data)
+glimpse(test_data)
+
+```
+
+```{r knn, echo=TRUE, message=FALSE, warning=FALSE, comment=NA}
+
+###############################################################################
+# Create function for knn algorithm
+###############################################################################
+knn_fun <- function(k_value){
+  cancer_knn <- knn(train = train_data[,3:32],
+                    test = test_data[,3:32],
+                       cl = train_data$diagnosis, k = k_value)
+  cancer_knn_table <- table(test_data$diagnosis, cancer_knn)
+  return(cancer_knn_table)
+}
+
+cancer_knn1 <- knn_fun(1) # K = 1
+cancer_knn10 <- knn_fun(10) # K = 10
+cancer_knn25 <- knn_fun(25) # K = 25
+
+confusionMatrix(cancer_knn1)
+confusionMatrix(cancer_knn10)
+confusionMatrix(cancer_knn25)
+
+```
+
+**Conclusion: Using a knn value of 25 yields the best accuracy.**
